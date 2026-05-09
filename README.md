@@ -65,6 +65,8 @@ cp .env.example .env
 
 ## Configuration
 
+### Local development
+
 Copy `.env.example` to `.env` and set the following:
 
 ```bash
@@ -86,6 +88,16 @@ LLM_TIMEOUT_SECONDS=60
 # Optional: LangSmith tracing
 LANGCHAIN_TRACING_V2=false
 LANGCHAIN_API_KEY=
+```
+
+### Streamlit Cloud deployment
+
+`OPENAI_API_KEY` and `LANGCHAIN_API_KEY` are read from **Streamlit Secrets** in the live deployment — do not hardcode them. Add them in the Streamlit Cloud dashboard under **App settings → Secrets**:
+
+```toml
+# .streamlit/secrets.toml (for local reference only — never commit this file)
+OPENAI_API_KEY = "sk-..."
+LANGCHAIN_API_KEY = "..."
 ```
 
 ## Running
@@ -197,7 +209,3 @@ WAV, MP3, FLAC, M4A — maximum duration 60 minutes.
 | `call_records` | One row per analyzed call; stores transcript, summary, QA scores, and report as JSON |
 | `audit_log_entries` | Per-call activity log for every pipeline action |
 | `transcription_cache` | SHA-256 hash → cached transcription (avoids reprocessing) |
-
-## License
-
-MIT

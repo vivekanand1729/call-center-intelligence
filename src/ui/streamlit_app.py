@@ -20,6 +20,16 @@ st.set_page_config(
     layout="wide",
 )
 
+# Ensure DB tables exist regardless of whether app.py was the entry point.
+# create_all is a no-op when tables already exist.
+def _ensure_db():
+    if "db_initialized" not in st.session_state:
+        from src.database.connection import get_engine, init_db
+        init_db(get_engine())
+        st.session_state["db_initialized"] = True
+
+_ensure_db()
+
 
 def _get_workflow():
     if "workflow" not in st.session_state:

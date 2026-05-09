@@ -127,6 +127,21 @@ def render_analyze_tab():
                 st.subheader("QA Scorecard")
                 st.markdown(result.qa_md)
 
+            if result.eval_results:
+                st.subheader("Guardrail & Observability Evaluators")
+                _SCORE_EMOJI = {(0.7, 1.01): "✅", (0.4, 0.7): "⚠️", (-1, 0.4): "❌"}
+                cols = st.columns(len(result.eval_results))
+                for col, er in zip(cols, result.eval_results):
+                    emoji = next(
+                        e for (lo, hi), e in _SCORE_EMOJI.items() if lo <= er.score < hi
+                    )
+                    col.metric(
+                        label=er.key.replace("_", " ").title(),
+                        value=f"{emoji} {er.value}",
+                        delta=f"{er.score:.2f}",
+                        help=er.comment,
+                    )
+
             st.subheader("Download Reports")
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:

@@ -43,6 +43,7 @@ class PipelineResult:
     error: Optional[str] = None
     pdf_path: Optional[str] = None
     json_path: Optional[str] = None
+    eval_results: list = field(default_factory=list)  # list[EvalResult]
 
 
 def _numpy_to_wav_bytes(sample_rate: int, audio_array) -> bytes:
@@ -123,6 +124,27 @@ def process_call(
     if status in ("failed",) or error:
         return PipelineResult(status=status, call_id=call_id, error=error)
 
+    # ── Run all 5 evaluators ──────────────────────────────────────────────────
+    from src.evaluation.evaluators import run_all_evaluators
+    eval_results = run_all_evaluators(result_state)
+
+    # Log evaluator scores to LangSmith as feedback on this run
+    if tracing_enabled:
+        try:
+            run_id = tracer.latest_run.id if tracer.latest_run else None
+            if run_id:
+                feedback_client = LangSmithClient()
+                for er in eval_results:
+                    feedback_client.create_feedback(
+                        run_id=run_id,
+                        key=er.key,
+                        score=er.score,
+                        value=er.value,
+                        comment=er.comment,
+                    )
+        except Exception:
+            pass  # Feedback logging is best-effort; never block the pipeline
+
     transcript_text = format_transcript(result_state.get("transcription"))
     summary_md = format_summary(result_state.get("summary"))
     qa_md = format_qa(result_state.get("qa_scores"))
@@ -156,4 +178,5 @@ def process_call(
         json_str=json_str,
         pdf_path=pdf_path,
         json_path=json_path,
+        eval_results=eval_results,
     )

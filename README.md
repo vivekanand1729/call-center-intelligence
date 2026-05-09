@@ -2,6 +2,8 @@
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-contactcenterai.streamlit.app-FF4B4B?logo=streamlit&logoColor=white)](https://contactcenterai.streamlit.app/)
 
+**Live:** https://contactcenterai.streamlit.app/
+
 An AI-powered multi-agent pipeline for analyzing and scoring customer service call recordings. Built with LangGraph, it transcribes audio, detects security threats, redacts PII, summarizes conversations, and scores call quality — all through an interactive Streamlit UI.
 
 ## Features

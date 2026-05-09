@@ -38,6 +38,11 @@ def _bootstrap():
     if os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGCHAIN_TRACING_V2"):
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
+    # Ensure the project name is always set so traces land in the right place.
+    # Without this, LangSmith silently uses the "default" project.
+    if not os.environ.get("LANGCHAIN_PROJECT"):
+        os.environ["LANGCHAIN_PROJECT"] = "call-center-intelligence"
+
     # Ensure DB tables exist. create_all is a no-op when tables already exist.
     from src.database.connection import get_engine, init_db
     init_db(get_engine())

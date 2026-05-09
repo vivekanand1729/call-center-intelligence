@@ -82,7 +82,34 @@ def process_call(
     )
 
     try:
-        result_state = workflow.invoke({"audio_input": audio_input})
+        invoke_kwargs: dict = {}
+        tracing_enabled = os.environ.get("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+        if tracing_enabled:
+            from langchain_core.tracers import LangChainTracer
+            from langsmith import Client as LangSmithClient
+
+            # LangSmith rejects payloads over 25 MB. Strip raw audio bytes from
+            # trace inputs so only metadata (filename, caller_id, etc.) is sent.
+            def _strip_binary(inputs: dict) -> dict:
+                out = {}
+                for k, v in inputs.items():
+                    if isinstance(v, bytes):
+                        out[k] = f"[binary: {len(v):,} bytes]"
+                    elif isinstance(v, dict):
+                        out[k] = {
+                            dk: f"[binary: {len(dv):,} bytes]" if isinstance(dv, bytes) else dv
+                            for dk, dv in v.items()
+                        }
+                    else:
+                        out[k] = v
+                return out
+
+            project = os.environ.get("LANGCHAIN_PROJECT", "call-center-intelligence")
+            ls_client = LangSmithClient(hide_inputs=_strip_binary)
+            tracer = LangChainTracer(project_name=project, client=ls_client)
+            invoke_kwargs = {"config": {"callbacks": [tracer], "run_name": "call_analysis"}}
+
+        result_state = workflow.invoke({"audio_input": audio_input}, **invoke_kwargs)
     except Exception as e:
         return PipelineResult(status="failed", error=str(e))
 

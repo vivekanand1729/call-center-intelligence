@@ -20,15 +20,31 @@ st.set_page_config(
     layout="wide",
 )
 
-# Ensure DB tables exist regardless of whether app.py was the entry point.
-# create_all is a no-op when tables already exist.
-def _ensure_db():
-    if "db_initialized" not in st.session_state:
-        from src.database.connection import get_engine, init_db
-        init_db(get_engine())
-        st.session_state["db_initialized"] = True
+def _bootstrap():
+    if "bootstrapped" in st.session_state:
+        return
 
-_ensure_db()
+    # Push Streamlit secrets into os.environ so every os.getenv() call in the
+    # codebase works on Streamlit Cloud without any changes elsewhere.
+    try:
+        for key, value in st.secrets.items():
+            if isinstance(value, str):
+                os.environ.setdefault(key, value)
+    except Exception:
+        pass  # No secrets file locally — that's fine
+
+    # Auto-enable LangSmith tracing when the API key is present but the
+    # tracing flag wasn't explicitly set.
+    if os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGCHAIN_TRACING_V2"):
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+
+    # Ensure DB tables exist. create_all is a no-op when tables already exist.
+    from src.database.connection import get_engine, init_db
+    init_db(get_engine())
+
+    st.session_state["bootstrapped"] = True
+
+_bootstrap()
 
 
 def _get_workflow():
@@ -61,7 +77,7 @@ def render_analyze_tab():
         caller_id = st.text_input("Caller ID (optional)")
         department = st.text_input("Department (optional)")
 
-    analyze_btn = st.button("Analyze Call", type="primary", use_container_width=True)
+    analyze_btn = st.button("Analyze Call", type="primary", width="stretch")
 
     if analyze_btn:
         if audio_file is None:
@@ -142,6 +158,12 @@ def render_history_tab():
         from src.database.models import CallRecord
         from sqlalchemy import desc
 
+        # Extract everything needed into plain dicts while the session is open.
+        # Accessing ORM attributes after session.close() triggers a lazy-load
+        # against a closed session and raises the "not bound to a Session" error.
+        table_data = []
+        detail_map: dict[str, dict] = {}
+
         with session_scope() as session:
             records = (
                 session.query(CallRecord)
@@ -150,54 +172,56 @@ def render_history_tab():
                 .all()
             )
 
-        if not records:
+            for r in records:
+                qa_score = "-"
+                if r.qa_scores_json:
+                    try:
+                        d = _json.loads(r.qa_scores_json)
+                        qa_score = f"{d.get('overall_score', 0):.1f}"
+                    except Exception:
+                        pass
+                table_data.append({
+                    "Call ID": r.call_id[:12] + "…",
+                    "Status": r.status,
+                    "Filename": r.audio_filename or "-",
+                    "QA Score": qa_score,
+                    "Processed At": r.processed_at.strftime("%Y-%m-%d %H:%M") if r.processed_at else "-",
+                })
+                detail_map[r.call_id] = {
+                    "status": r.status,
+                    "processed_at": r.processed_at,
+                    "transcript_text": r.transcript_text,
+                    "summary_json": r.summary_json,
+                }
+
+        if not table_data:
             st.info("No calls analyzed yet. Use the **Analyze Call** tab to get started.")
             return
 
-        # Summary table
-        table_data = []
-        for r in records:
-            qa_score = "-"
-            if r.qa_scores_json:
-                try:
-                    d = _json.loads(r.qa_scores_json)
-                    qa_score = f"{d.get('overall_score', 0):.1f}"
-                except Exception:
-                    pass
-            table_data.append({
-                "Call ID": r.call_id[:12] + "…",
-                "Status": r.status,
-                "Filename": r.audio_filename or "-",
-                "QA Score": qa_score,
-                "Processed At": r.processed_at.strftime("%Y-%m-%d %H:%M") if r.processed_at else "-",
-            })
-
         import pandas as pd
-        df = pd.DataFrame(table_data)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(pd.DataFrame(table_data), width="stretch")
 
         # Detail view
         st.subheader("Call Detail")
-        call_ids = [r.call_id for r in records]
+        call_ids = list(detail_map.keys())
         selected = st.selectbox("Select Call ID for details", call_ids, format_func=lambda x: x[:20] + "…")
         if selected:
-            record = next((r for r in records if r.call_id == selected), None)
-            if record:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"**Status:** {record.status}")
-                    st.markdown(f"**Processed:** {record.processed_at}")
-                    if record.transcript_text:
-                        st.text_area("Transcript", value=record.transcript_text, height=200)
-                with col2:
-                    if record.summary_json:
-                        from src.graph.state import SummaryResult
-                        from src.utils.formatters import format_summary
-                        try:
-                            s = SummaryResult.model_validate_json(record.summary_json)
-                            st.markdown(format_summary(s))
-                        except Exception:
-                            st.json(_json.loads(record.summary_json))
+            rec = detail_map[selected]
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Status:** {rec['status']}")
+                st.markdown(f"**Processed:** {rec['processed_at']}")
+                if rec["transcript_text"]:
+                    st.text_area("Transcript", value=rec["transcript_text"], height=200)
+            with col2:
+                if rec["summary_json"]:
+                    from src.graph.state import SummaryResult
+                    from src.utils.formatters import format_summary
+                    try:
+                        s = SummaryResult.model_validate_json(rec["summary_json"])
+                        st.markdown(format_summary(s))
+                    except Exception:
+                        st.json(_json.loads(rec["summary_json"]))
     except Exception as e:
         st.error(f"Error loading history: {e}")
 
@@ -207,7 +231,7 @@ def render_history_tab():
 def render_observability_tab():
     st.header("Observability")
 
-    if st.button("Refresh Metrics", use_container_width=False):
+    if st.button("Refresh Metrics", width="content"):
         st.cache_data.clear()
 
     try:
@@ -224,7 +248,7 @@ def render_observability_tab():
         if audit_rows:
             import pandas as pd
             df = pd.DataFrame(audit_rows, columns=["Timestamp", "Call ID", "Action", "Details"])
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
         else:
             st.info("No audit events recorded yet.")
     except Exception as e:
